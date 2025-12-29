@@ -22,9 +22,10 @@
     button { border: 0; border-radius: 10px; padding: 8px 12px; cursor: pointer; font-weight: 700; }
     .plus { background: #1f7a1f; color: white; }
     .minus { background: #b42318; color: white; }
-    .plus:disabled, .minus:disabled { opacity: .35; cursor: not-allowed; }
+    .plus:disabled, .minus:disabled, button:disabled { opacity: .35; cursor: not-allowed; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 18px; justify-content: center; }
     .secondary { background: #111; color: #fff; }
+    .finish { background: #0057b8; color: #fff; } /* blue */
     .muted { color: #555; font-size: 13px; }
     details { margin-top: 10px; max-width: 720px; margin-left: auto; margin-right: auto; }
 
@@ -35,10 +36,16 @@
     .panel { max-width: 720px; margin: 16px auto; }
     .field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
     input[type="text"] { padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .status { font-size: 13px; color: #333; }
     .ok { color: #1f7a1f; }
     .bad { color: #b42318; }
+    .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; background:#eef1ff; color:#111; font-weight:600; }
+    .doneBox {
+      max-width: 720px; margin: 16px auto; padding: 14px;
+      border-radius: 14px; background: #e9fff0; border: 1px solid #b9f0c8;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -47,8 +54,12 @@
     PLUS = weź 1 koralik z Magazynu • MINUS = oddaj 1 koralik do Magazynu
   </div>
 
+  <div class="doneBox" id="doneBox">
+    <strong>Gotowe.</strong> Dane zostały wysłane. Możesz wrócić do ankiety i kliknąć <em>Dalej</em>.
+  </div>
+
   <!-- Participant input + algorithm box -->
-  <div class="panel card">
+  <div class="panel card" id="topPanel">
     <div class="field">
       <label class="muted"><strong>ID uczestnika</strong> (np. Prolific ID / inicjały + numer)</label>
       <input id="participantId" type="text" placeholder="np. P12345" />
@@ -57,14 +68,23 @@
       <label class="muted"><strong>Opis algorytmu / kod uczestnika</strong></label>
       <textarea id="codeBox" rows="8" placeholder="Wpisz tutaj swój opis algorytmu..."></textarea>
     </div>
+
     <div class="actions">
       <button class="secondary" id="sendBtn">Wyślij logi + kod</button>
+      <button class="finish" id="finishBtn">Zakończ zadanie (Wyślij i zablokuj)</button>
       <button id="clearLocalBtn">Wyczyść lokalne logi</button>
+
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="logToggle" checked />
         Loguj ruchy (na ekran)
       </label>
+
+      <span class="pill" id="pendingPill">0 zdarzeń</span>
       <span class="status" id="sendStatus"></span>
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      W Qualtrics możesz przekazywać parametry: <code>?session=task1&amp;pid=...</code>
     </div>
   </div>
 
@@ -80,11 +100,20 @@
   </details>
 
   <script>
-    // 1) Paste your Apps Script web app URL here:
+    // Apps Script Web App URL:
     const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby9rhpFH5H5jEp7nDEM2t0I9j6VQIQ3uWpGCWalUv_8UxUiaMmketkgrIm-N3enf25CtQ/exec";
-  
-    // Session ID per page load (for joining all events)
-    const sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
+
+    function getParam(name) {
+      return new URLSearchParams(window.location.search).get(name);
+    }
+
+    // Session comes from Qualtrics block: ?session=task1 / task2 / ...
+    const sessionId =
+      getParam("session") ||
+      (crypto.randomUUID ? crypto.randomUUID() : (String(Date.now()) + "_" + Math.random().toString(16).slice(2)));
+
+    // Optional separate task label; defaults to session
+    const task = getParam("task") || getParam("session") || "unspecified";
 
     const containers = [
       { key: "MAG", name: "Magazyn", icon: "📦" },
@@ -106,12 +135,37 @@
     const participantIdEl = document.getElementById("participantId");
     const codeBoxEl = document.getElementById("codeBox");
     const sendStatusEl = document.getElementById("sendStatus");
+    const pendingPill = document.getElementById("pendingPill");
+    const doneBox = document.getElementById("doneBox");
+    const resetBtn = document.getElementById("resetBtn");
+    const sendBtn = document.getElementById("sendBtn");
+    const finishBtn = document.getElementById("finishBtn");
+    const clearLocalBtn = document.getElementById("clearLocalBtn");
+
+    // Prefill participantId from Qualtrics: ?pid=...
+    const pidFromURL = getParam("pid");
+    if (pidFromURL) {
+      participantIdEl.value = pidFromURL;
+      participantIdEl.disabled = true;
+    }
 
     // Structured event log (for Google Sheets)
     const events = [];
 
+    // State: finished lock
+    let isFinished = false;
+
     function snapshotState() {
       return { MAG: state.MAG, A: state.A, B: state.B, C: state.C, D: state.D, E: state.E, W: state.W };
+    }
+
+    function updatePendingPill() {
+      pendingPill.textContent = `${events.length} zdarzeń`;
+    }
+
+    function setStatus(msg, kind="") {
+      sendStatusEl.textContent = msg;
+      sendStatusEl.className = "status " + (kind || "");
     }
 
     function logLocal(msg) {
@@ -121,7 +175,6 @@
     }
 
     function recordEvent(ev) {
-      // ev: {type, from, to}
       events.push({
         ts: Date.now(),
         type: ev.type,
@@ -129,6 +182,25 @@
         to: ev.to || "",
         state: snapshotState()
       });
+      updatePendingPill();
+    }
+
+    function setUIEnabled(enabled) {
+      // Disable/enable top controls
+      resetBtn.disabled = !enabled;
+      sendBtn.disabled = !enabled;
+      clearLocalBtn.disabled = !enabled;
+      finishBtn.disabled = !enabled;
+
+      // Disable/enable all container move buttons
+      document.querySelectorAll("button.plus, button.minus").forEach(btn => {
+        btn.disabled = !enabled || btn.disabled; // preserve per-button disable rules
+      });
+
+      // If disabling, force-disable all move buttons
+      if (!enabled) {
+        document.querySelectorAll("button.plus, button.minus").forEach(btn => btn.disabled = true);
+      }
     }
 
     function render() {
@@ -142,7 +214,6 @@
 
         const label = document.createElement("div");
         label.className = "label";
-        // NOTE: now supports className for letter icons
         label.innerHTML = `<span class="icon ${c.className || ""}">${c.icon}</span><span>${c.name}</span>`;
 
         const right = document.createElement("div");
@@ -159,10 +230,11 @@
         const plus = document.createElement("button");
         plus.className = "plus";
         plus.textContent = "+";
-        // plus means MAG -> X; disabled if MAG empty
-        plus.disabled = (state["MAG"] === 0);
+        plus.disabled = isFinished || (state["MAG"] === 0);
         plus.onclick = () => {
+          if (isFinished) return;
           if (state["MAG"] === 0) return;
+
           state[c.key] += 1;
           state["MAG"] -= 1;
 
@@ -174,10 +246,11 @@
         const minus = document.createElement("button");
         minus.className = "minus";
         minus.textContent = "−";
-        // minus means X -> MAG; disable for MAG itself or if X empty
-        minus.disabled = (state[c.key] === 0 || c.key === "MAG");
+        minus.disabled = isFinished || (state[c.key] === 0 || c.key === "MAG");
         minus.onclick = () => {
+          if (isFinished) return;
           if (state[c.key] === 0 || c.key === "MAG") return;
+
           state[c.key] -= 1;
           state["MAG"] += 1;
 
@@ -193,13 +266,13 @@
 
         row.appendChild(label);
         row.appendChild(right);
-
         card.appendChild(row);
         grid.appendChild(card);
       });
     }
 
-    document.getElementById("resetBtn").onclick = () => {
+    resetBtn.onclick = () => {
+      if (isFinished) return;
       for (const k in state) state[k] = 0;
       state["MAG"] = 1000;
       logLocal("RESET (MAG = 1000)");
@@ -207,75 +280,104 @@
       render();
     };
 
-    document.getElementById("clearLocalBtn").onclick = () => {
+    clearLocalBtn.onclick = () => {
+      if (isFinished) return;
       logArea.value = "";
       events.length = 0;
-      sendStatusEl.textContent = "Wyczyszczono lokalne logi.";
-      sendStatusEl.className = "status";
+      updatePendingPill();
+      setStatus("Wyczyszczono lokalne logi.");
     };
 
-    async function sendToSheets() {
-  const participantId = participantIdEl.value.trim();
-  const codeText = codeBoxEl.value.trim();
+    // Core sender (beacon). If `force` true: send even if events empty (rarely needed).
+    function sendToSheets({force=false, silent=false} = {}) {
+      const participantId = participantIdEl.value.trim();
+      const codeText = codeBoxEl.value.trim();
 
-  if (!SCRIPT_URL || SCRIPT_URL.includes("PASTE_YOUR")) {
-    sendStatusEl.textContent = "Set SCRIPT_URL (Apps Script Web App URL).";
-    sendStatusEl.className = "status bad";
-    return;
-  }
-  if (!participantId) {
-    sendStatusEl.textContent = "Enter Participant ID before sending.";
-    sendStatusEl.className = "status bad";
-    return;
-  }
-  if (events.length === 0) {
-    sendStatusEl.textContent = "No logs to send.";
-    sendStatusEl.className = "status bad";
-    return;
-  }
+      if (!SCRIPT_URL) {
+        if (!silent) setStatus("Brak SCRIPT_URL.", "bad");
+        return false;
+      }
+      if (!participantId) {
+        if (!silent) setStatus("Wpisz ID uczestnika przed wysłaniem.", "bad");
+        return false;
+      }
+      if (!force && events.length === 0) {
+        if (!silent) setStatus("Brak logów do wysłania.");
+        return false;
+      }
 
-  sendStatusEl.textContent = "Sending…";
-  sendStatusEl.className = "status";
+      const payload = {
+        sessionId,
+        task,
+        participantId,
+        codeText,
+        userAgent: navigator.userAgent,
+        events
+      };
 
-  const payload = {
-    sessionId,
-    participantId,
-    codeText,
-    userAgent: navigator.userAgent,
-    events
-  };
+      try {
+        const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
+        const ok = navigator.sendBeacon(SCRIPT_URL, blob);
 
-  try {
-    // sendBeacon requires a Blob or ArrayBufferView
-    const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
-    const ok = navigator.sendBeacon(SCRIPT_URL, blob);
+        if (!silent) {
+          if (ok) setStatus(`OK: wysłano ${events.length} zdarzeń.`, "ok");
+          else setStatus("sendBeacon nie powiódł się (przeglądarka zablokowała wysyłkę).", "bad");
+        }
 
-    if (ok) {
-      sendStatusEl.textContent = `OK: sent ${events.length} events.`;
-      sendStatusEl.className = "status ok";
-      events.length = 0;
-    } else {
-      // fallback to fetch if beacon fails
-      const res = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        mode: "no-cors" // avoids CORS block, but you can't read the response
-      });
-
-      sendStatusEl.textContent = `Sent (no-cors). Check the Sheet for rows.`;
-      sendStatusEl.className = "status ok";
-      events.length = 0;
+        if (ok) {
+          events.length = 0;
+          updatePendingPill();
+        }
+        return ok;
+      } catch (err) {
+        if (!silent) setStatus("Błąd wysyłania: " + String(err), "bad");
+        return false;
+      }
     }
-  } catch (err) {
-    sendStatusEl.textContent = "Send error: " + String(err);
-    sendStatusEl.className = "status bad";
-  }
-}
 
-    document.getElementById("sendBtn").onclick = sendToSheets;
+    // Manual send
+    sendBtn.onclick = () => {
+      setStatus("Wysyłanie…");
+      sendToSheets();
+    };
+
+    // Finish: send + lock UI + show message
+    finishBtn.onclick = () => {
+      setStatus("Wysyłanie i kończenie…");
+      const ok = sendToSheets();
+      if (ok) {
+        isFinished = true;
+        setUIEnabled(false);
+        doneBox.style.display = "block";
+        setStatus("Zakończono. Możesz kliknąć Dalej w ankiecie.", "ok");
+      } else {
+        // don’t lock if send failed
+        setStatus("Nie udało się wysłać. Spróbuj ponownie (Wyślij logi + kod).", "bad");
+      }
+      render();
+    };
+
+    // -------- Auto-send on leaving / hiding (Qualtrics iframe friendly) --------
+    let autoSent = false;
+
+    function autoSendIfNeeded() {
+      if (autoSent) return;
+      if (events.length === 0) return;
+      // Silent send (no UI spam)
+      const ok = sendToSheets({silent:true});
+      if (ok) autoSent = true;
+    }
+
+    // pagehide is best for iOS/Safari + iframes
+    window.addEventListener("pagehide", autoSendIfNeeded);
+
+    // visibilitychange covers iframe navigation changes
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") autoSendIfNeeded();
+    });
 
     // Initial render
+    updatePendingPill();
     render();
   </script>
 </body>
