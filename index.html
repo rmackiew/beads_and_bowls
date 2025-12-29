@@ -247,7 +247,7 @@
 
   try {
     // sendBeacon requires a Blob or ArrayBufferView
-    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
     const ok = navigator.sendBeacon(SCRIPT_URL, blob);
 
     if (ok) {
