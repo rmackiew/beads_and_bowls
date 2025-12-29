@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Koraliki – pojemniki</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: #f6f7fb; color: #111; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    .grid { display: flex; flex-direction: column; gap: 12px; max-width: 520px; margin: 0 auto; }
+    .card { background: white; border-radius: 14px; padding: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .label { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+    .icon { width: 34px; height: 34px; border-radius: 10px; display: inline-flex;
+            align-items: center; justify-content: center; background: #eef1ff; }
+    .icon.letter { font-size: 18px; font-weight: 800; color: white; }
+    .icon.green { background: #1f7a1f; }
+
+    .count { font-size: 22px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+    .btns { display: flex; gap: 8px; }
+    button { border: 0; border-radius: 10px; padding: 8px 12px; cursor: pointer; font-weight: 700; }
+    .plus { background: #1f7a1f; color: white; }
+    .minus { background: #b42318; color: white; }
+    .plus:disabled, .minus:disabled { opacity: .35; cursor: not-allowed; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 18px; justify-content: center; }
+    .secondary { background: #111; color: #fff; }
+    .muted { color: #555; font-size: 13px; }
+    details { margin-top: 10px; max-width: 720px; margin-left: auto; margin-right: auto; }
+
+    textarea { width: 100%; border-radius: 10px; border: 1px solid #ddd; padding: 10px;
+               font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+               font-size: 12px; }
+
+    .panel { max-width: 720px; margin: 16px auto; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+    input[type="text"] { padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .status { font-size: 13px; color: #333; }
+    .ok { color: #1f7a1f; }
+    .bad { color: #b42318; }
+  </style>
+</head>
+<body>
+  <h1>Koraliki – symulator pojemników</h1>
+  <div class="muted" style="text-align:center;">
+    PLUS = weź 1 koralik z Magazynu • MINUS = oddaj 1 koralik do Magazynu
+  </div>
+
+  <!-- Participant input + algorithm box -->
+  <div class="panel card">
+    <div class="field">
+      <label class="muted"><strong>ID uczestnika</strong> (np. Prolific ID / inicjały + numer)</label>
+      <input id="participantId" type="text" placeholder="np. P12345" />
+    </div>
+    <div class="field">
+      <label class="muted"><strong>Opis algorytmu / kod uczestnika</strong></label>
+      <textarea id="codeBox" rows="8" placeholder="Wpisz tutaj swój opis algorytmu..."></textarea>
+    </div>
+    <div class="actions">
+      <button class="secondary" id="sendBtn">Wyślij logi + kod</button>
+      <button id="clearLocalBtn">Wyczyść lokalne logi</button>
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="logToggle" checked />
+        Loguj ruchy (na ekran)
+      </label>
+      <span class="status" id="sendStatus"></span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button class="secondary" id="resetBtn">Reset</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <details>
+    <summary class="muted">Log operacji (lokalny podgląd)</summary>
+    <textarea id="log" readonly rows="10"></textarea>
+  </details>
+
+  <script>
+    // 1) Paste your Apps Script web app URL here:
+    const SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_WEBAPP_URL_HERE";
+
+    // Session ID per page load (for joining all events)
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
+
+    const containers = [
+      { key: "MAG", name: "Magazyn", icon: "📦" },
+      { key: "A", name: "Pudełko A", icon: "A", className: "letter green" },
+      { key: "B", name: "Pudełko B", icon: "B", className: "letter green" },
+      { key: "C", name: "Pudełko C", icon: "C", className: "letter green" },
+      { key: "D", name: "Pudełko D", icon: "D", className: "letter green" },
+      { key: "E", name: "Pudełko E", icon: "E", className: "letter green" },
+      { key: "W", name: "Wynik", icon: "✅" }
+    ];
+
+    // --- INITIAL STATE ---
+    const state = Object.fromEntries(containers.map(c => [c.key, 0]));
+    state["MAG"] = 1000;
+
+    const grid = document.getElementById("grid");
+    const logArea = document.getElementById("log");
+    const logToggle = document.getElementById("logToggle");
+    const participantIdEl = document.getElementById("participantId");
+    const codeBoxEl = document.getElementById("codeBox");
+    const sendStatusEl = document.getElementById("sendStatus");
+
+    // Structured event log (for Google Sheets)
+    const events = [];
+
+    function snapshotState() {
+      return { MAG: state.MAG, A: state.A, B: state.B, C: state.C, D: state.D, E: state.E, W: state.W };
+    }
+
+    function logLocal(msg) {
+      if (!logToggle.checked) return;
+      logArea.value += msg + "\n";
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function recordEvent(ev) {
+      // ev: {type, from, to}
+      events.push({
+        ts: Date.now(),
+        type: ev.type,
+        from: ev.from || "",
+        to: ev.to || "",
+        state: snapshotState()
+      });
+    }
+
+    function render() {
+      grid.innerHTML = "";
+      containers.forEach(c => {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const label = document.createElement("div");
+        label.className = "label";
+        // NOTE: now supports className for letter icons
+        label.innerHTML = `<span class="icon ${c.className || ""}">${c.icon}</span><span>${c.name}</span>`;
+
+        const right = document.createElement("div");
+        right.className = "row";
+        right.style.justifyContent = "flex-end";
+
+        const count = document.createElement("div");
+        count.className = "count";
+        count.textContent = state[c.key];
+
+        const btns = document.createElement("div");
+        btns.className = "btns";
+
+        const plus = document.createElement("button");
+        plus.className = "plus";
+        plus.textContent = "+";
+        // plus means MAG -> X; disabled if MAG empty
+        plus.disabled = (state["MAG"] === 0);
+        plus.onclick = () => {
+          if (state["MAG"] === 0) return;
+          state[c.key] += 1;
+          state["MAG"] -= 1;
+
+          logLocal(`MAG → ${c.key}`);
+          recordEvent({ type: "MOVE", from: "MAG", to: c.key });
+          render();
+        };
+
+        const minus = document.createElement("button");
+        minus.className = "minus";
+        minus.textContent = "−";
+        // minus means X -> MAG; disable for MAG itself or if X empty
+        minus.disabled = (state[c.key] === 0 || c.key === "MAG");
+        minus.onclick = () => {
+          if (state[c.key] === 0 || c.key === "MAG") return;
+          state[c.key] -= 1;
+          state["MAG"] += 1;
+
+          logLocal(`${c.key} → MAG`);
+          recordEvent({ type: "MOVE", from: c.key, to: "MAG" });
+          render();
+        };
+
+        btns.appendChild(minus);
+        btns.appendChild(plus);
+        right.appendChild(count);
+        right.appendChild(btns);
+
+        row.appendChild(label);
+        row.appendChild(right);
+
+        card.appendChild(row);
+        grid.appendChild(card);
+      });
+    }
+
+    document.getElementById("resetBtn").onclick = () => {
+      for (const k in state) state[k] = 0;
+      state["MAG"] = 1000;
+      logLocal("RESET (MAG = 1000)");
+      recordEvent({ type: "RESET", from: "", to: "" });
+      render();
+    };
+
+    document.getElementById("clearLocalBtn").onclick = () => {
+      logArea.value = "";
+      events.length = 0;
+      sendStatusEl.textContent = "Wyczyszczono lokalne logi.";
+      sendStatusEl.className = "status";
+    };
+
+    async function sendToSheets() {
+      const participantId = participantIdEl.value.trim();
+      const codeText = codeBoxEl.value.trim();
+
+      if (!SCRIPT_URL || SCRIPT_URL.includes("PASTE_YOUR")) {
+        sendStatusEl.textContent = "Ustaw SCRIPT_URL w kodzie (Apps Script Web App URL).";
+        sendStatusEl.className = "status bad";
+        return;
+      }
+      if (!participantId) {
+        sendStatusEl.textContent = "Wpisz ID uczestnika przed wysłaniem.";
+        sendStatusEl.className = "status bad";
+        return;
+      }
+      if (events.length === 0) {
+        sendStatusEl.textContent = "Brak logów do wysłania.";
+        sendStatusEl.className = "status bad";
+        return;
+      }
+
+      sendStatusEl.textContent = "Wysyłanie…";
+      sendStatusEl.className = "status";
+
+      const payload = {
+        sessionId,
+        participantId,
+        codeText,
+        userAgent: navigator.userAgent,
+        events
+      };
+
+      try {
+        const res = await fetch(SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.ok) {
+          sendStatusEl.textContent = `OK: wysłano ${data.received} zdarzeń.`;
+          sendStatusEl.className = "status ok";
+          // Optional: clear after successful send
+          events.length = 0;
+        } else {
+          sendStatusEl.textContent = "Błąd po stronie Apps Script: " + (data.error || "unknown");
+          sendStatusEl.className = "status bad";
+        }
+      } catch (err) {
+        sendStatusEl.textContent = "Błąd wysyłania: " + String(err);
+        sendStatusEl.className = "status bad";
+      }
+    }
+
+    document.getElementById("sendBtn").onclick = sendToSheets;
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
