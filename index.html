@@ -7,7 +7,7 @@
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; padding: 24px; background: #f6f7fb; color: #111; }
-    h1 { margin: 0 0 12px; font-size: 20px; }
+    h1 { margin: 0 0 12px; font-size: 20px; text-align:center; }
     .grid { display: flex; flex-direction: column; gap: 12px; max-width: 520px; margin: 0 auto; }
     .card { background: white; border-radius: 14px; padding: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -23,9 +23,11 @@
     .plus { background: #1f7a1f; color: white; }
     .minus { background: #b42318; color: white; }
     .plus:disabled, .minus:disabled, button:disabled { opacity: .35; cursor: not-allowed; }
+
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 18px; justify-content: center; }
     .secondary { background: #111; color: #fff; }
-    .finish { background: #0057b8; color: #fff; } /* blue */
+    .finish { background: #0057b8; color: #fff; }
+
     .muted { color: #555; font-size: 13px; }
     details { margin-top: 10px; max-width: 720px; margin-left: auto; margin-right: auto; }
 
@@ -40,14 +42,24 @@
     .status { font-size: 13px; color: #333; }
     .ok { color: #1f7a1f; }
     .bad { color: #b42318; }
+
     .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; background:#eef1ff; color:#111; font-weight:600; }
+
     .doneBox {
       max-width: 720px; margin: 16px auto; padding: 14px;
       border-radius: 14px; background: #e9fff0; border: 1px solid #b9f0c8;
       display: none;
     }
+
+    /* --- Qualtrics mode: hide ID + algorithm panel + local log preview --- */
+    body.qualtrics #topPanel { display: none; }
+    body.qualtrics details { display: none; }
+
+    /* Bottom finish bar */
+    #finishBar { max-width: 720px; margin-left:auto; margin-right:auto; justify-content:center; }
   </style>
 </head>
+
 <body>
   <h1>Koraliki – symulator pojemników</h1>
   <div class="muted" style="text-align:center;">
@@ -58,7 +70,7 @@
     <strong>Gotowe.</strong> Dane zostały wysłane. Możesz wrócić do ankiety i kliknąć <em>Dalej</em>.
   </div>
 
-  <!-- Participant input + algorithm box -->
+  <!-- Participant input + algorithm box (hidden in Qualtrics mode) -->
   <div class="panel card" id="topPanel">
     <div class="field">
       <label class="muted"><strong>ID uczestnika</strong> (np. Prolific ID / inicjały + numer)</label>
@@ -71,7 +83,6 @@
 
     <div class="actions">
       <button class="secondary" id="sendBtn">Wyślij logi + kod</button>
-      <button class="finish" id="finishBtn">Zakończ zadanie (Wyślij i zablokuj)</button>
       <button id="clearLocalBtn">Wyczyść lokalne logi</button>
 
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
@@ -84,15 +95,22 @@
     </div>
 
     <div class="muted" style="margin-top:8px;">
-      W Qualtrics możesz przekazywać parametry: <code>?session=task1&amp;pid=...</code>
+      Parametry URL (Qualtrics): <code>?session=task1&amp;pid=...&amp;qualtrics=1</code>
     </div>
   </div>
 
+  <!-- Keep Reset visible in Qualtrics -->
   <div class="toolbar">
     <button class="secondary" id="resetBtn">Reset</button>
   </div>
 
   <div class="grid" id="grid"></div>
+
+  <!-- Finish button moved to bottom (always visible, especially in Qualtrics) -->
+  <div class="toolbar" id="finishBar" style="margin-top:18px;">
+    <button class="finish" id="finishBtn">Zakończ zadanie</button>
+    <span class="status" id="finishStatus"></span>
+  </div>
 
   <details>
     <summary class="muted">Log operacji (lokalny podgląd)</summary>
@@ -106,6 +124,10 @@
     function getParam(name) {
       return new URLSearchParams(window.location.search).get(name);
     }
+
+    // Qualtrics mode: hide top panel + local log
+    const isQualtrics = getParam("qualtrics") === "1";
+    if (isQualtrics) document.body.classList.add("qualtrics");
 
     // Session comes from Qualtrics block: ?session=task1 / task2 / ...
     const sessionId =
@@ -132,11 +154,14 @@
     const grid = document.getElementById("grid");
     const logArea = document.getElementById("log");
     const logToggle = document.getElementById("logToggle");
+
     const participantIdEl = document.getElementById("participantId");
     const codeBoxEl = document.getElementById("codeBox");
     const sendStatusEl = document.getElementById("sendStatus");
+    const finishStatusEl = document.getElementById("finishStatus");
     const pendingPill = document.getElementById("pendingPill");
     const doneBox = document.getElementById("doneBox");
+
     const resetBtn = document.getElementById("resetBtn");
     const sendBtn = document.getElementById("sendBtn");
     const finishBtn = document.getElementById("finishBtn");
@@ -144,7 +169,7 @@
 
     // Prefill participantId from Qualtrics: ?pid=...
     const pidFromURL = getParam("pid");
-    if (pidFromURL) {
+    if (pidFromURL && participantIdEl) {
       participantIdEl.value = pidFromURL;
       participantIdEl.disabled = true;
     }
@@ -160,15 +185,17 @@
     }
 
     function updatePendingPill() {
-      pendingPill.textContent = `${events.length} zdarzeń`;
+      if (pendingPill) pendingPill.textContent = `${events.length} zdarzeń`;
     }
 
-    function setStatus(msg, kind="") {
-      sendStatusEl.textContent = msg;
-      sendStatusEl.className = "status " + (kind || "");
+    function setStatus(el, msg, kind="") {
+      if (!el) return;
+      el.textContent = msg;
+      el.className = "status " + (kind || "");
     }
 
     function logLocal(msg) {
+      if (!logArea || !logToggle) return;
       if (!logToggle.checked) return;
       logArea.value += msg + "\n";
       logArea.scrollTop = logArea.scrollHeight;
@@ -185,22 +212,17 @@
       updatePendingPill();
     }
 
-    function setUIEnabled(enabled) {
-      // Disable/enable top controls
-      resetBtn.disabled = !enabled;
-      sendBtn.disabled = !enabled;
-      clearLocalBtn.disabled = !enabled;
-      finishBtn.disabled = !enabled;
+    function lockUI() {
+      isFinished = true;
+      // disable main controls (Reset stays enabled? you asked to keep it visible; but after finish, better lock it)
+      // We'll disable Reset too after finishing to prevent extra data after finish.
+      resetBtn.disabled = true;
+      if (sendBtn) sendBtn.disabled = true;
+      if (clearLocalBtn) clearLocalBtn.disabled = true;
+      finishBtn.disabled = true;
 
-      // Disable/enable all container move buttons
-      document.querySelectorAll("button.plus, button.minus").forEach(btn => {
-        btn.disabled = !enabled || btn.disabled; // preserve per-button disable rules
-      });
-
-      // If disabling, force-disable all move buttons
-      if (!enabled) {
-        document.querySelectorAll("button.plus, button.minus").forEach(btn => btn.disabled = true);
-      }
+      // disable all move buttons
+      document.querySelectorAll("button.plus, button.minus").forEach(btn => btn.disabled = true);
     }
 
     function render() {
@@ -266,6 +288,7 @@
 
         row.appendChild(label);
         row.appendChild(right);
+
         card.appendChild(row);
         grid.appendChild(card);
       });
@@ -280,29 +303,35 @@
       render();
     };
 
-    clearLocalBtn.onclick = () => {
-      if (isFinished) return;
-      logArea.value = "";
-      events.length = 0;
-      updatePendingPill();
-      setStatus("Wyczyszczono lokalne logi.");
-    };
+    if (clearLocalBtn) {
+      clearLocalBtn.onclick = () => {
+        if (isFinished) return;
+        if (logArea) logArea.value = "";
+        events.length = 0;
+        updatePendingPill();
+        setStatus(sendStatusEl, "Wyczyszczono lokalne logi.");
+      };
+    }
 
-    // Core sender (beacon). If `force` true: send even if events empty (rarely needed).
-    function sendToSheets({force=false, silent=false} = {}) {
-      const participantId = participantIdEl.value.trim();
-      const codeText = codeBoxEl.value.trim();
+    // Core sender (beacon).
+    function sendToSheets({silent=false} = {}) {
+      const participantId =
+        ((participantIdEl && participantIdEl.value) || pidFromURL || "").trim();
+      const codeText =
+        (codeBoxEl ? codeBoxEl.value.trim() : ""); // in Qualtrics codeBox is hidden, can be empty
 
       if (!SCRIPT_URL) {
-        if (!silent) setStatus("Brak SCRIPT_URL.", "bad");
+        if (!silent) setStatus(sendStatusEl, "Brak SCRIPT_URL.", "bad");
         return false;
       }
       if (!participantId) {
-        if (!silent) setStatus("Wpisz ID uczestnika przed wysłaniem.", "bad");
+        if (!silent) setStatus(sendStatusEl, "Brak ID (pid) w linku z Qualtrics.", "bad");
         return false;
       }
-      if (!force && events.length === 0) {
-        if (!silent) setStatus("Brak logów do wysłania.");
+
+      // Allow finishing even with 0 events? You probably want at least something.
+      if (events.length === 0) {
+        if (!silent) setStatus(sendStatusEl, "Brak logów do wysłania.", "bad");
         return false;
       }
 
@@ -320,8 +349,8 @@
         const ok = navigator.sendBeacon(SCRIPT_URL, blob);
 
         if (!silent) {
-          if (ok) setStatus(`OK: wysłano ${events.length} zdarzeń.`, "ok");
-          else setStatus("sendBeacon nie powiódł się (przeglądarka zablokowała wysyłkę).", "bad");
+          if (ok) setStatus(sendStatusEl, `OK: wysłano ${events.length} zdarzeń.`, "ok");
+          else setStatus(sendStatusEl, "sendBeacon nie powiódł się.", "bad");
         }
 
         if (ok) {
@@ -330,48 +359,43 @@
         }
         return ok;
       } catch (err) {
-        if (!silent) setStatus("Błąd wysyłania: " + String(err), "bad");
+        if (!silent) setStatus(sendStatusEl, "Błąd wysyłania: " + String(err), "bad");
         return false;
       }
     }
 
-    // Manual send
-    sendBtn.onclick = () => {
-      setStatus("Wysyłanie…");
-      sendToSheets();
-    };
+    // Manual send (available only in non-Qualtrics mode, but leaving it won't hurt)
+    if (sendBtn) {
+      sendBtn.onclick = () => {
+        setStatus(sendStatusEl, "Wysyłanie…");
+        sendToSheets();
+      };
+    }
 
     // Finish: send + lock UI + show message
     finishBtn.onclick = () => {
-      setStatus("Wysyłanie i kończenie…");
+      setStatus(finishStatusEl, "Wysyłanie i kończenie…");
       const ok = sendToSheets();
       if (ok) {
-        isFinished = true;
-        setUIEnabled(false);
+        lockUI();
         doneBox.style.display = "block";
-        setStatus("Zakończono. Możesz kliknąć Dalej w ankiecie.", "ok");
+        setStatus(finishStatusEl, "Zakończono. Możesz kliknąć Dalej w ankiecie.", "ok");
       } else {
-        // don’t lock if send failed
-        setStatus("Nie udało się wysłać. Spróbuj ponownie (Wyślij logi + kod).", "bad");
+        setStatus(finishStatusEl, "Nie udało się wysłać. Spróbuj ponownie.", "bad");
       }
       render();
     };
 
-    // -------- Auto-send on leaving / hiding (Qualtrics iframe friendly) --------
+    // Auto-send on leaving/hiding (Qualtrics iframe friendly)
     let autoSent = false;
-
     function autoSendIfNeeded() {
       if (autoSent) return;
       if (events.length === 0) return;
-      // Silent send (no UI spam)
       const ok = sendToSheets({silent:true});
       if (ok) autoSent = true;
     }
 
-    // pagehide is best for iOS/Safari + iframes
     window.addEventListener("pagehide", autoSendIfNeeded);
-
-    // visibilitychange covers iframe navigation changes
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") autoSendIfNeeded();
     });
