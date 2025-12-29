@@ -215,57 +215,63 @@
     };
 
     async function sendToSheets() {
-      const participantId = participantIdEl.value.trim();
-      const codeText = codeBoxEl.value.trim();
+  const participantId = participantIdEl.value.trim();
+  const codeText = codeBoxEl.value.trim();
 
-      if (!SCRIPT_URL || SCRIPT_URL.includes("PASTE_YOUR")) {
-        sendStatusEl.textContent = "Ustaw SCRIPT_URL w kodzie (Apps Script Web App URL).";
-        sendStatusEl.className = "status bad";
-        return;
-      }
-      if (!participantId) {
-        sendStatusEl.textContent = "Wpisz ID uczestnika przed wysłaniem.";
-        sendStatusEl.className = "status bad";
-        return;
-      }
-      if (events.length === 0) {
-        sendStatusEl.textContent = "Brak logów do wysłania.";
-        sendStatusEl.className = "status bad";
-        return;
-      }
+  if (!SCRIPT_URL || SCRIPT_URL.includes("PASTE_YOUR")) {
+    sendStatusEl.textContent = "Set SCRIPT_URL (Apps Script Web App URL).";
+    sendStatusEl.className = "status bad";
+    return;
+  }
+  if (!participantId) {
+    sendStatusEl.textContent = "Enter Participant ID before sending.";
+    sendStatusEl.className = "status bad";
+    return;
+  }
+  if (events.length === 0) {
+    sendStatusEl.textContent = "No logs to send.";
+    sendStatusEl.className = "status bad";
+    return;
+  }
 
-      sendStatusEl.textContent = "Wysyłanie…";
-      sendStatusEl.className = "status";
+  sendStatusEl.textContent = "Sending…";
+  sendStatusEl.className = "status";
 
-      const payload = {
-        sessionId,
-        participantId,
-        codeText,
-        userAgent: navigator.userAgent,
-        events
-      };
+  const payload = {
+    sessionId,
+    participantId,
+    codeText,
+    userAgent: navigator.userAgent,
+    events
+  };
 
-      try {
-        const res = await fetch(SCRIPT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (data.ok) {
-          sendStatusEl.textContent = `OK: wysłano ${data.received} zdarzeń.`;
-          sendStatusEl.className = "status ok";
-          // Optional: clear after successful send
-          events.length = 0;
-        } else {
-          sendStatusEl.textContent = "Błąd po stronie Apps Script: " + (data.error || "unknown");
-          sendStatusEl.className = "status bad";
-        }
-      } catch (err) {
-        sendStatusEl.textContent = "Błąd wysyłania: " + String(err);
-        sendStatusEl.className = "status bad";
-      }
+  try {
+    // sendBeacon requires a Blob or ArrayBufferView
+    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+    const ok = navigator.sendBeacon(SCRIPT_URL, blob);
+
+    if (ok) {
+      sendStatusEl.textContent = `OK: sent ${events.length} events.`;
+      sendStatusEl.className = "status ok";
+      events.length = 0;
+    } else {
+      // fallback to fetch if beacon fails
+      const res = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        mode: "no-cors" // avoids CORS block, but you can't read the response
+      });
+
+      sendStatusEl.textContent = `Sent (no-cors). Check the Sheet for rows.`;
+      sendStatusEl.className = "status ok";
+      events.length = 0;
     }
+  } catch (err) {
+    sendStatusEl.textContent = "Send error: " + String(err);
+    sendStatusEl.className = "status bad";
+  }
+}
 
     document.getElementById("sendBtn").onclick = sendToSheets;
 
