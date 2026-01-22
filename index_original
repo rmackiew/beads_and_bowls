@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Koraliki – pojemniki</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: #f6f7fb; color: #111; }
+    h1 { margin: 0 0 12px; font-size: 20px; text-align:center; }
+    .grid { display: flex; flex-direction: column; gap: 12px; max-width: 520px; margin: 0 auto; }
+    .card { background: white; border-radius: 14px; padding: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .label { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+    .icon { width: 34px; height: 34px; border-radius: 10px; display: inline-flex;
+            align-items: center; justify-content: center; background: #eef1ff; }
+    .icon.letter { font-size: 18px; font-weight: 800; color: white; }
+    .icon.green { background: #1f7a1f; }
+
+    .count { font-size: 22px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+    .btns { display: flex; gap: 8px; }
+    button { border: 0; border-radius: 10px; padding: 8px 12px; cursor: pointer; font-weight: 700; }
+    .plus { background: #1f7a1f; color: white; }
+    .minus { background: #b42318; color: white; }
+    .plus:disabled, .minus:disabled, button:disabled { opacity: .35; cursor: not-allowed; }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 18px; justify-content: center; }
+    .secondary { background: #111; color: #fff; }
+    .finish { background: #0057b8; color: #fff; }
+
+    .muted { color: #555; font-size: 13px; }
+    details { margin-top: 10px; max-width: 720px; margin-left: auto; margin-right: auto; }
+
+    textarea { width: 100%; border-radius: 10px; border: 1px solid #ddd; padding: 10px;
+               font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+               font-size: 12px; }
+
+    .panel { max-width: 720px; margin: 16px auto; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+    input[type="text"] { padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .status { font-size: 13px; color: #333; }
+    .ok { color: #1f7a1f; }
+    .bad { color: #b42318; }
+
+    .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; background:#eef1ff; color:#111; font-weight:600; }
+
+    .doneBox {
+      max-width: 720px; margin: 16px auto; padding: 14px;
+      border-radius: 14px; background: #e9fff0; border: 1px solid #b9f0c8;
+      display: none;
+    }
+
+    /* --- Qualtrics mode: hide ID + algorithm panel + local log preview --- */
+    body.qualtrics #topPanel { display: none; }
+    body.qualtrics details { display: none; }
+
+    /* Bottom finish bar */
+    #finishBar { max-width: 720px; margin-left:auto; margin-right:auto; justify-content:center; }
+  </style>
+</head>
+
+<body>
+  <h1>Koraliki – symulator pojemników</h1>
+  <div class="muted" style="text-align:center;">
+    PLUS = weź 1 koralik z Magazynu • MINUS = oddaj 1 koralik do Magazynu
+  </div>
+
+  <div class="doneBox" id="doneBox">
+    <strong>Gotowe.</strong> Dane zostały wysłane. Możesz wrócić do ankiety i kliknąć <em>Dalej</em>.
+  </div>
+
+  <!-- Participant input + algorithm box (hidden in Qualtrics mode) -->
+  <div class="panel card" id="topPanel">
+    <div class="field">
+      <label class="muted"><strong>ID uczestnika</strong> (np. Prolific ID / inicjały + numer)</label>
+      <input id="participantId" type="text" placeholder="np. P12345" />
+    </div>
+    <div class="field">
+      <label class="muted"><strong>Opis algorytmu / kod uczestnika</strong></label>
+      <textarea id="codeBox" rows="8" placeholder="Wpisz tutaj swój opis algorytmu..."></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="secondary" id="sendBtn">Wyślij logi + kod</button>
+      <button id="clearLocalBtn">Wyczyść lokalne logi</button>
+
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="logToggle" checked />
+        Loguj ruchy (na ekran)
+      </label>
+
+      <span class="pill" id="pendingPill">0 zdarzeń</span>
+      <span class="status" id="sendStatus"></span>
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      Parametry URL (Qualtrics): <code>?session=task1&amp;pid=...&amp;qualtrics=1</code>
+    </div>
+  </div>
+
+  <!-- Keep Reset visible in Qualtrics -->
+  <div class="toolbar">
+    <button class="secondary" id="resetBtn">Reset</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <!-- Finish button moved to bottom (always visible, especially in Qualtrics) -->
+  <div class="toolbar" id="finishBar" style="margin-top:18px;">
+    <button class="finish" id="finishBtn">Zakończ zadanie</button>
+    <span class="status" id="finishStatus"></span>
+  </div>
+
+  <details>
+    <summary class="muted">Log operacji (lokalny podgląd)</summary>
+    <textarea id="log" readonly rows="10"></textarea>
+  </details>
+
+  <script>
+    // Apps Script Web App URL:
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby9rhpFH5H5jEp7nDEM2t0I9j6VQIQ3uWpGCWalUv_8UxUiaMmketkgrIm-N3enf25CtQ/exec";
+
+    function getParam(name) {
+      return new URLSearchParams(window.location.search).get(name);
+    }
+
+    // Qualtrics mode: hide top panel + local log
+    const isQualtrics = getParam("qualtrics") === "1";
+    if (isQualtrics) document.body.classList.add("qualtrics");
+
+    // Session comes from Qualtrics block: ?session=task1 / task2 / ...
+    const sessionId =
+      getParam("session") ||
+      (crypto.randomUUID ? crypto.randomUUID() : (String(Date.now()) + "_" + Math.random().toString(16).slice(2)));
+
+    // Optional separate task label; defaults to session
+    const task = getParam("task") || getParam("session") || "unspecified";
+
+    const containers = [
+      { key: "MAG", name: "Magazyn", icon: "📦" },
+      { key: "A", name: "Pudełko A", icon: "A", className: "letter green" },
+      { key: "B", name: "Pudełko B", icon: "B", className: "letter green" },
+      { key: "C", name: "Pudełko C", icon: "C", className: "letter green" },
+      { key: "D", name: "Pudełko D", icon: "D", className: "letter green" },
+      { key: "E", name: "Pudełko E", icon: "E", className: "letter green" },
+      { key: "W", name: "Wynik", icon: "✅" }
+    ];
+
+    // --- INITIAL STATE ---
+    const state = Object.fromEntries(containers.map(c => [c.key, 0]));
+    state["MAG"] = 1000;
+
+    const grid = document.getElementById("grid");
+    const logArea = document.getElementById("log");
+    const logToggle = document.getElementById("logToggle");
+
+    const participantIdEl = document.getElementById("participantId");
+    const codeBoxEl = document.getElementById("codeBox");
+    const sendStatusEl = document.getElementById("sendStatus");
+    const finishStatusEl = document.getElementById("finishStatus");
+    const pendingPill = document.getElementById("pendingPill");
+    const doneBox = document.getElementById("doneBox");
+
+    const resetBtn = document.getElementById("resetBtn");
+    const sendBtn = document.getElementById("sendBtn");
+    const finishBtn = document.getElementById("finishBtn");
+    const clearLocalBtn = document.getElementById("clearLocalBtn");
+
+    // Prefill participantId from Qualtrics: ?pid=...
+    const pidFromURL = getParam("pid");
+    if (pidFromURL && participantIdEl) {
+      participantIdEl.value = pidFromURL;
+      participantIdEl.disabled = true;
+    }
+
+    // Structured event log (for Google Sheets)
+    const events = [];
+
+    // State: finished lock
+    let isFinished = false;
+
+    function snapshotState() {
+      return { MAG: state.MAG, A: state.A, B: state.B, C: state.C, D: state.D, E: state.E, W: state.W };
+    }
+
+    function updatePendingPill() {
+      if (pendingPill) pendingPill.textContent = `${events.length} zdarzeń`;
+    }
+
+    function setStatus(el, msg, kind="") {
+      if (!el) return;
+      el.textContent = msg;
+      el.className = "status " + (kind || "");
+    }
+
+    function logLocal(msg) {
+      if (!logArea || !logToggle) return;
+      if (!logToggle.checked) return;
+      logArea.value += msg + "\n";
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function recordEvent(ev) {
+      events.push({
+        ts: Date.now(),
+        type: ev.type,
+        from: ev.from || "",
+        to: ev.to || "",
+        state: snapshotState()
+      });
+      updatePendingPill();
+    }
+
+    function lockUI() {
+      isFinished = true;
+      // disable main controls (Reset stays enabled? you asked to keep it visible; but after finish, better lock it)
+      // We'll disable Reset too after finishing to prevent extra data after finish.
+      resetBtn.disabled = true;
+      if (sendBtn) sendBtn.disabled = true;
+      if (clearLocalBtn) clearLocalBtn.disabled = true;
+      finishBtn.disabled = true;
+
+      // disable all move buttons
+      document.querySelectorAll("button.plus, button.minus").forEach(btn => btn.disabled = true);
+    }
+
+    function render() {
+      grid.innerHTML = "";
+      containers.forEach(c => {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const label = document.createElement("div");
+        label.className = "label";
+        label.innerHTML = `<span class="icon ${c.className || ""}">${c.icon}</span><span>${c.name}</span>`;
+
+        const right = document.createElement("div");
+        right.className = "row";
+        right.style.justifyContent = "flex-end";
+
+        const count = document.createElement("div");
+        count.className = "count";
+        count.textContent = state[c.key];
+
+        const btns = document.createElement("div");
+        btns.className = "btns";
+
+        const plus = document.createElement("button");
+        plus.className = "plus";
+        plus.textContent = "+";
+        plus.disabled = isFinished || (state["MAG"] === 0);
+        plus.onclick = () => {
+          if (isFinished) return;
+          if (state["MAG"] === 0) return;
+
+          state[c.key] += 1;
+          state["MAG"] -= 1;
+
+          logLocal(`MAG → ${c.key}`);
+          recordEvent({ type: "MOVE", from: "MAG", to: c.key });
+          render();
+        };
+
+        const minus = document.createElement("button");
+        minus.className = "minus";
+        minus.textContent = "−";
+        minus.disabled = isFinished || (state[c.key] === 0 || c.key === "MAG");
+        minus.onclick = () => {
+          if (isFinished) return;
+          if (state[c.key] === 0 || c.key === "MAG") return;
+
+          state[c.key] -= 1;
+          state["MAG"] += 1;
+
+          logLocal(`${c.key} → MAG`);
+          recordEvent({ type: "MOVE", from: c.key, to: "MAG" });
+          render();
+        };
+
+        btns.appendChild(minus);
+        btns.appendChild(plus);
+        right.appendChild(count);
+        right.appendChild(btns);
+
+        row.appendChild(label);
+        row.appendChild(right);
+
+        card.appendChild(row);
+        grid.appendChild(card);
+      });
+    }
+
+    resetBtn.onclick = () => {
+      if (isFinished) return;
+      for (const k in state) state[k] = 0;
+      state["MAG"] = 1000;
+      logLocal("RESET (MAG = 1000)");
+      recordEvent({ type: "RESET", from: "", to: "" });
+      render();
+    };
+
+    if (clearLocalBtn) {
+      clearLocalBtn.onclick = () => {
+        if (isFinished) return;
+        if (logArea) logArea.value = "";
+        events.length = 0;
+        updatePendingPill();
+        setStatus(sendStatusEl, "Wyczyszczono lokalne logi.");
+      };
+    }
+
+    // Core sender (beacon).
+    function sendToSheets({silent=false} = {}) {
+      const participantId =
+        ((participantIdEl && participantIdEl.value) || pidFromURL || "").trim();
+      const codeText =
+        (codeBoxEl ? codeBoxEl.value.trim() : ""); // in Qualtrics codeBox is hidden, can be empty
+
+      if (!SCRIPT_URL) {
+        if (!silent) setStatus(sendStatusEl, "Brak SCRIPT_URL.", "bad");
+        return false;
+      }
+      if (!participantId) {
+        if (!silent) setStatus(sendStatusEl, "Brak ID (pid) w linku z Qualtrics.", "bad");
+        return false;
+      }
+
+      // Allow finishing even with 0 events? You probably want at least something.
+      if (events.length === 0) {
+        if (!silent) setStatus(sendStatusEl, "Brak logów do wysłania.", "bad");
+        return false;
+      }
+
+      const payload = {
+        sessionId,
+        task,
+        participantId,
+        codeText,
+        userAgent: navigator.userAgent,
+        events
+      };
+
+      try {
+        const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
+        const ok = navigator.sendBeacon(SCRIPT_URL, blob);
+
+        if (!silent) {
+          if (ok) setStatus(sendStatusEl, `OK: wysłano ${events.length} zdarzeń.`, "ok");
+          else setStatus(sendStatusEl, "sendBeacon nie powiódł się.", "bad");
+        }
+
+        if (ok) {
+          events.length = 0;
+          updatePendingPill();
+        }
+        return ok;
+      } catch (err) {
+        if (!silent) setStatus(sendStatusEl, "Błąd wysyłania: " + String(err), "bad");
+        return false;
+      }
+    }
+
+    // Manual send (available only in non-Qualtrics mode, but leaving it won't hurt)
+    if (sendBtn) {
+      sendBtn.onclick = () => {
+        setStatus(sendStatusEl, "Wysyłanie…");
+        sendToSheets();
+      };
+    }
+
+    // Finish: send + lock UI + show message
+    finishBtn.onclick = () => {
+      setStatus(finishStatusEl, "Wysyłanie i kończenie…");
+      const ok = sendToSheets();
+      if (ok) {
+        lockUI();
+        doneBox.style.display = "block";
+        setStatus(finishStatusEl, "Zakończono. Możesz kliknąć Dalej w ankiecie.", "ok");
+      } else {
+        setStatus(finishStatusEl, "Nie udało się wysłać. Spróbuj ponownie.", "bad");
+      }
+      render();
+    };
+
+    // Auto-send on leaving/hiding (Qualtrics iframe friendly)
+    let autoSent = false;
+    function autoSendIfNeeded() {
+      if (autoSent) return;
+      if (events.length === 0) return;
+      const ok = sendToSheets({silent:true});
+      if (ok) autoSent = true;
+    }
+
+    window.addEventListener("pagehide", autoSendIfNeeded);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") autoSendIfNeeded();
+    });
+
+    // Initial render
+    updatePendingPill();
+    render();
+  </script>
+</body>
+</html>
